@@ -898,6 +898,10 @@ export class BaileysAdapter implements ChannelAdapter {
     if (!webhookUrl) return;
 
     const { message, chatId, instanceId } = event;
+
+    // Skip status broadcasts (stories) and protocol messages
+    if (chatId === "status@broadcast") return;
+
     const isGroup = chatId.endsWith("@g.us");
 
     const payload = {

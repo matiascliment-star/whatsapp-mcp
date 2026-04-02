@@ -883,8 +883,48 @@ export class BaileysAdapter implements ChannelAdapter {
         { instanceId, messageId: message.id, chatId, fromMe: message.isFromMe },
         "Message persisted to DB",
       );
+
+      // Sync to Supabase
+      this.syncToSupabase(event).catch((err) => {
+        logger.error({ err, messageId: message.id }, "Failed to sync message to Supabase");
+      });
     } catch (err) {
       logger.error({ err, messageId: event.message.id }, "Failed to persist message");
+    }
+  }
+
+  private async syncToSupabase(event: NormalizedMessageEvent): Promise<void> {
+    const webhookUrl = process.env.WA_SUPABASE_WEBHOOK_URL;
+    if (!webhookUrl) return;
+
+    const { message, chatId, instanceId } = event;
+    const isGroup = chatId.endsWith("@g.us");
+
+    const payload = {
+      id: message.id,
+      chat_id: chatId,
+      sender_id: message.isFromMe ? "me" : message.sender,
+      sender_name: null,
+      is_from_me: message.isFromMe,
+      type: message.type,
+      content: message.content,
+      media_url: message.mediaUrl,
+      quoted_message_id: message.quotedMessageId,
+      is_forwarded: false,
+      is_group: isGroup,
+      timestamp: message.timestamp,
+      instance_id: instanceId,
+    };
+
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      logger.error({ status: res.status, body: text }, "Supabase webhook error");
     }
   }
 

@@ -23,12 +23,14 @@ const logger = createChildLogger({ service: "maintenance" });
 
 type MaintenanceJobType = "prune-messages" | "prune-dedup" | "check-wa-version";
 
-function getRedisOpts(): { host: string; port: number; maxRetriesPerRequest: null } {
+function getRedisOpts(): { host: string; port: number; username?: string; password?: string; maxRetriesPerRequest: null } {
   const url = process.env.WA_REDIS_URL ?? DEFAULT_REDIS_URL;
   const parsed = new URL(url);
   return {
     host: parsed.hostname || "localhost",
     port: parseInt(parsed.port || "6379", 10),
+    ...(parsed.username && { username: parsed.username }),
+    ...(parsed.password && { password: parsed.password }),
     maxRetriesPerRequest: null,
   };
 }

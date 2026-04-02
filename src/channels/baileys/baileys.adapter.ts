@@ -44,7 +44,7 @@ import type {
 import { useSqliteAuthState, clearAuthState } from "./baileys.auth.js";
 import { getWaVersion } from "./baileys.version.js";
 import { db } from "../../db/client.js";
-import { contacts as contactsTable, messages as messagesTable } from "../../db/schema.js";
+import { contacts as contactsTable, messages as messagesTable, groupsCache as groupsCacheTable } from "../../db/schema.js";
 import { eq, and, like, or, desc } from "drizzle-orm";
 import {
   normalizeMessagesUpsert,
@@ -926,11 +926,18 @@ export class BaileysAdapter implements ChannelAdapter {
     // For groups, try groups cache in DB
     if (chatId.endsWith("@g.us")) {
       try {
-        const row = db.query.groupsCache.findFirst({
-          where: (g, { eq, and }) =>
-            and(eq(g.instanceId, this.instanceId), eq(g.jid, chatId)),
-        });
-        if (row?.subject) return row.subject;
+        const rows = db
+          .select({ subject: groupsCacheTable.subject })
+          .from(groupsCacheTable)
+          .where(
+            and(
+              eq(groupsCacheTable.instanceId, this.instanceId),
+              eq(groupsCacheTable.jid, chatId),
+            ),
+          )
+          .limit(1)
+          .all();
+        if (rows.length > 0 && rows[0].subject) return rows[0].subject;
       } catch { /* ignore */ }
     }
     return null;

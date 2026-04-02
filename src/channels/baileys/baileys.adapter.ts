@@ -974,6 +974,7 @@ export class BaileysAdapter implements ChannelAdapter {
       quoted_message_id: message.quotedMessageId,
       is_forwarded: this.extractIsForwarded(rawMsg),
       is_group: isGroup,
+      chat_type: isGroup ? "group" : "individual",
       status: message.isFromMe ? "sent" : "received",
       timestamp: message.timestamp,
       instance_id: instanceId,

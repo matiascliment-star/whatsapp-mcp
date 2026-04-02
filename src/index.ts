@@ -122,6 +122,62 @@ async function startHttp(): Promise<void> {
       return;
     }
 
+    // REST API: Send message
+    if (url.pathname === "/api/send" && req.method === "POST") {
+      // CORS
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+      let body = "";
+      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const { chatId, text, instanceId } = JSON.parse(body);
+          if (!chatId || !text) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "chatId and text required" }));
+            return;
+          }
+          // Find instance
+          let instId = instanceId;
+          if (!instId) {
+            const all = instanceManager.getAllInstances();
+            const connected = all.find(i => i.status === "connected");
+            if (connected) instId = connected.id;
+          }
+          if (!instId) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "No connected WhatsApp instance" }));
+            return;
+          }
+          const adapter = instanceManager.getAdapter(instId);
+          if (!adapter) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Instance not found" }));
+            return;
+          }
+          const result = await messageQueue.enqueueMessage(instId, chatId, { type: "text", text });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "queued", jobId: result }));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+      });
+      return;
+    }
+
+    // REST API: CORS preflight
+    if (url.pathname === "/api/send" && req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     // MCP endpoint
     if (url.pathname === MCP_ENDPOINT) {
       // Authenticate before processing MCP requests

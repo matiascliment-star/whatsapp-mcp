@@ -853,7 +853,7 @@ export class BaileysAdapter implements ChannelAdapter {
 
   // ---- Message Persistence ----
 
-  private persistMessage(event: NormalizedMessageEvent): void {
+  private persistMessage(event: NormalizedMessageEvent, rawMsg?: WAMessage): void {
     try {
       const { message, chatId, instanceId } = event;
       db.insert(messagesTable)
@@ -885,7 +885,7 @@ export class BaileysAdapter implements ChannelAdapter {
       );
 
       // Sync to Supabase
-      this.syncToSupabase(event).catch((err) => {
+      this.syncToSupabase(event, rawMsg).catch((err) => {
         logger.error({ err, messageId: message.id }, "Failed to sync message to Supabase");
       });
     } catch (err) {
@@ -893,13 +893,56 @@ export class BaileysAdapter implements ChannelAdapter {
     }
   }
 
-  private async syncToSupabase(event: NormalizedMessageEvent): Promise<void> {
+  private extractMediaMimetype(rawMsg?: WAMessage): string | null {
+    if (!rawMsg?.message) return null;
+    const m = rawMsg.message;
+    return (
+      m.imageMessage?.mimetype ??
+      m.videoMessage?.mimetype ??
+      m.audioMessage?.mimetype ??
+      m.documentMessage?.mimetype ??
+      m.stickerMessage?.mimetype ??
+      m.documentWithCaptionMessage?.message?.documentMessage?.mimetype ??
+      null
+    );
+  }
+
+  private extractIsForwarded(rawMsg?: WAMessage): boolean {
+    if (!rawMsg?.message) return false;
+    const m = rawMsg.message;
+    const ctx =
+      m.extendedTextMessage?.contextInfo ??
+      m.imageMessage?.contextInfo ??
+      m.videoMessage?.contextInfo ??
+      m.audioMessage?.contextInfo ??
+      m.documentMessage?.contextInfo;
+    return ctx?.isForwarded ?? false;
+  }
+
+  private getChatName(chatId: string): string | null {
+    // Try contact cache for individual chats
+    const contact = this.contactCache.get(chatId);
+    if (contact) return contact.name ?? contact.notify ?? null;
+    // For groups, try groups cache in DB
+    if (chatId.endsWith("@g.us")) {
+      try {
+        const row = db.query.groupsCache.findFirst({
+          where: (g, { eq, and }) =>
+            and(eq(g.instanceId, this.instanceId), eq(g.jid, chatId)),
+        });
+        if (row?.subject) return row.subject;
+      } catch { /* ignore */ }
+    }
+    return null;
+  }
+
+  private async syncToSupabase(event: NormalizedMessageEvent, rawMsg?: WAMessage): Promise<void> {
     const webhookUrl = process.env.WA_SUPABASE_WEBHOOK_URL;
     if (!webhookUrl) return;
 
     const { message, chatId, instanceId } = event;
 
-    // Skip status broadcasts (stories) and protocol messages
+    // Skip status broadcasts (stories)
     if (chatId === "status@broadcast") return;
 
     const isGroup = chatId.endsWith("@g.us");
@@ -907,15 +950,18 @@ export class BaileysAdapter implements ChannelAdapter {
     const payload = {
       id: message.id,
       chat_id: chatId,
+      chat_name: this.getChatName(chatId),
       sender_id: message.isFromMe ? "me" : message.sender,
-      sender_name: null,
+      sender_name: rawMsg?.pushName ?? null,
       is_from_me: message.isFromMe,
       type: message.type,
       content: message.content,
       media_url: message.mediaUrl,
+      media_mimetype: this.extractMediaMimetype(rawMsg),
       quoted_message_id: message.quotedMessageId,
-      is_forwarded: false,
+      is_forwarded: this.extractIsForwarded(rawMsg),
       is_group: isGroup,
+      status: message.isFromMe ? "sent" : "received",
       timestamp: message.timestamp,
       instance_id: instanceId,
     };
@@ -1198,7 +1244,7 @@ export class BaileysAdapter implements ChannelAdapter {
                 isFromMe: msg.key.fromMe ?? false,
               },
             };
-            this.persistMessage(normalized);
+            this.persistMessage(normalized, msg);
           }
         }
 

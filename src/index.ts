@@ -83,7 +83,6 @@ async function initServices() {
 
 async function startHttp(): Promise<void> {
   const { instanceManager, messageQueue } = await initServices();
-  const mcpServer = createMcpServer(instanceManager, messageQueue);
   const startTime = Date.now();
 
   // Map to track transports by session ID
@@ -126,7 +125,10 @@ async function startHttp(): Promise<void> {
         if (sessionId && transports.has(sessionId)) {
           mcpTransport = transports.get(sessionId)!;
         } else {
-          // Create new transport for new session
+          // Create a new McpServer and transport per session to avoid
+          // "Already connected to a transport" errors
+          const mcpServer = createMcpServer(instanceManager, messageQueue);
+
           mcpTransport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => crypto.randomUUID(),
             onsessioninitialized: (newSessionId) => {

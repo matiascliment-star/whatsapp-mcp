@@ -919,11 +919,11 @@ export class BaileysAdapter implements ChannelAdapter {
     return ctx?.isForwarded ?? false;
   }
 
-  private getChatName(chatId: string): string | null {
+  private async getChatName(chatId: string): Promise<string | null> {
     // Try contact cache for individual chats
     const contact = this.contactCache.get(chatId);
     if (contact) return contact.name ?? contact.notify ?? null;
-    // For groups, try groups cache in DB
+    // For groups, try groups cache in DB first
     if (chatId.endsWith("@g.us")) {
       try {
         const rows = db
@@ -938,6 +938,12 @@ export class BaileysAdapter implements ChannelAdapter {
           .limit(1)
           .all();
         if (rows.length > 0 && rows[0].subject) return rows[0].subject;
+      } catch { /* ignore */ }
+      // Fallback: fetch group metadata from WhatsApp
+      try {
+        const sock = this.getSock();
+        const meta = await sock.groupMetadata(chatId);
+        return meta.subject ?? null;
       } catch { /* ignore */ }
     }
     return null;
@@ -957,7 +963,7 @@ export class BaileysAdapter implements ChannelAdapter {
     const payload = {
       id: message.id,
       chat_id: chatId,
-      chat_name: this.getChatName(chatId),
+      chat_name: await this.getChatName(chatId),
       sender_id: message.isFromMe ? "me" : message.sender,
       sender_name: rawMsg?.pushName ?? null,
       is_from_me: message.isFromMe,

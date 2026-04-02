@@ -89,6 +89,18 @@ async function startHttp(): Promise<void> {
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // CORS headers for claude.ai and other browser-based clients
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-API-Key, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
 
     // Health endpoint

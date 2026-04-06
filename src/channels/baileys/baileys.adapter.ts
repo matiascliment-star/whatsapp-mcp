@@ -9,6 +9,7 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   generateForwardMessageContent,
   generateWAMessageFromContent,
+  downloadMediaMessage,
   type WASocket,
   type WAMessage,
   type AnyMessageContent,
@@ -980,10 +981,29 @@ export class BaileysAdapter implements ChannelAdapter {
       instance_id: instanceId,
     };
 
+    // Download media for non-text messages and include as base64
+    let mediaBase64: string | null = null;
+    if (rawMsg && message.type !== "text" && message.type !== "reaction" && this.sock) {
+      try {
+        const buffer = await downloadMediaMessage(
+          rawMsg,
+          "buffer",
+          {},
+          { logger: logger as unknown as import("pino").Logger, reuploadRequest: this.sock.updateMediaMessage },
+        );
+        // Only include if under 10 MB
+        if (buffer && buffer.length < 10 * 1024 * 1024) {
+          mediaBase64 = Buffer.from(buffer).toString("base64");
+        }
+      } catch (err) {
+        logger.warn({ err, messageId: message.id }, "Failed to download media for webhook");
+      }
+    }
+
     const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, media_base64: mediaBase64 }),
     });
 
     if (!res.ok) {

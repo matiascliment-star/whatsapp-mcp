@@ -9,6 +9,7 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   generateForwardMessageContent,
   generateWAMessageFromContent,
+  downloadMediaMessage,
   type WASocket,
   type WAMessage,
   type AnyMessageContent,
@@ -920,10 +921,7 @@ export class BaileysAdapter implements ChannelAdapter {
   }
 
   private async getChatName(chatId: string): Promise<string | null> {
-    // Try contact cache for individual chats
-    const contact = this.contactCache.get(chatId);
-    if (contact) return contact.name ?? contact.notify ?? null;
-    // For groups, try groups cache in DB first
+    // For groups, only use group-specific sources (not contact cache which has sender names)
     if (chatId.endsWith("@g.us")) {
       try {
         const rows = db
@@ -945,7 +943,11 @@ export class BaileysAdapter implements ChannelAdapter {
         const meta = await sock.groupMetadata(chatId);
         return meta.subject ?? null;
       } catch { /* ignore */ }
+      return null;
     }
+    // For individual chats, use contact cache
+    const contact = this.contactCache.get(chatId);
+    if (contact) return contact.name ?? contact.notify ?? null;
     return null;
   }
 
@@ -957,6 +959,9 @@ export class BaileysAdapter implements ChannelAdapter {
 
     // Skip status broadcasts (stories)
     if (chatId === "status@broadcast") return;
+
+    // Skip empty text messages (protocol messages, history sync artifacts)
+    if (message.type === "text" && !message.content) return;
 
     const isGroup = chatId.endsWith("@g.us");
 
@@ -980,10 +985,30 @@ export class BaileysAdapter implements ChannelAdapter {
       instance_id: instanceId,
     };
 
+    // Download media for non-text messages and include as base64
+    let mediaBase64: string | null = null;
+    if (rawMsg && message.type !== "text" && message.type !== "reaction" && this.sock) {
+      try {
+        const buffer = await downloadMediaMessage(
+          rawMsg,
+          "buffer",
+          {},
+          { logger: logger as any, reuploadRequest: this.sock.updateMediaMessage },
+        );
+        if (buffer && buffer.length < 10 * 1024 * 1024) {
+          mediaBase64 = Buffer.from(buffer).toString("base64");
+        }
+      } catch (err) {
+        logger.warn({ err, messageId: message.id }, "Failed to download media for webhook");
+      }
+    }
+
+    const fullPayload = { ...payload, media_base64: mediaBase64 };
+
     const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(fullPayload),
     });
 
     if (!res.ok) {

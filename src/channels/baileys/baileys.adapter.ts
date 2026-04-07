@@ -16,6 +16,7 @@ import makeWASocket, {
   type MiscMessageGenerationOptions,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
+import { convertToOggOpus } from "../../services/audio-convert.js";
 import type { ChannelAdapter, ChannelEventHandler } from "../channel.interface.js";
 import type {
   ConnectionStatus,
@@ -273,13 +274,36 @@ export class BaileysAdapter implements ChannelAdapter {
           opts.quoted = this.makeQuotedStub(jid, content.quotedMessageId);
         }
         break;
-      case "audio":
+      case "audio": {
+        let audioMedia = this.resolveMedia(content.audio);
+        // Convert non-OGG audio to OGG Opus via ffmpeg for WhatsApp compatibility
+        try {
+          let audioBuf: Buffer;
+          if (Buffer.isBuffer(audioMedia)) {
+            audioBuf = audioMedia;
+          } else {
+            // Download from URL first
+            const resp = await fetch(audioMedia.url);
+            audioBuf = Buffer.from(await resp.arrayBuffer());
+          }
+          // Check if already OGG (starts with "OggS")
+          const isOgg = audioBuf.length > 4 && audioBuf[0] === 0x4f && audioBuf[1] === 0x67 && audioBuf[2] === 0x67 && audioBuf[3] === 0x53;
+          if (!isOgg) {
+            logger.info("Converting audio to OGG Opus via ffmpeg");
+            audioMedia = await convertToOggOpus(audioBuf);
+          } else {
+            audioMedia = audioBuf;
+          }
+        } catch (err) {
+          logger.warn({ err }, "Audio conversion failed, sending original");
+        }
         msg = {
-          audio: this.resolveMedia(content.audio),
+          audio: audioMedia,
           ptt: content.ptt ?? false,
           mimetype: "audio/ogg; codecs=opus",
         };
         break;
+      }
       case "document":
         msg = {
           document: this.resolveMedia(content.document),
